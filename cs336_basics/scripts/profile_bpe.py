@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import cProfile
+import pstats
 import sys
 from pathlib import Path
 
@@ -53,6 +54,11 @@ def main() -> None:
     print(f"Saved profile to {profile_path}")
     print(f"Saved vocab to {vocab_path}")
     print(f"Saved merges to {merges_path}")
+
+    stats = pstats.Stats(str(profile_path))
+    stats.sort_stats("cumulative")
+    print("Top cumulative time functions:")
+    stats.print_stats(15)
 
 
 if __name__ == "__main__":
