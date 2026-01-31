@@ -21,6 +21,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--special-token", action="append", default=None)
     parser.add_argument("--out-dir", default="artifacts/bpe")
     parser.add_argument("--name", default=None)
+    parser.add_argument("--no-progress", action="store_true")
     return parser.parse_args()
 
 
@@ -31,7 +32,7 @@ def main() -> None:
     vocab_size = resolve_vocab_size(args.vocab_size, args.dataset if args.input_path is None else None)
     special_tokens = list(args.special_token) if args.special_token else ["<|endoftext|>"]
 
-    vocab, merges = train_bpe(str(input_path), vocab_size, special_tokens)
+    vocab, merges = train_bpe(str(input_path), vocab_size, special_tokens, progress=not args.no_progress)
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

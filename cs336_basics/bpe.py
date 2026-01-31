@@ -28,6 +28,7 @@ def train_bpe(
     input_path: str,
     vocab_size: int,
     special_tokens: list[str] | None = None,
+    progress: bool = False,
 ) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
     """
     Train a byte-level BPE tokenizer.
@@ -44,7 +45,13 @@ def train_bpe(
     with open(input_path, encoding="utf-8") as f:
         text = f.read()
 
-    for segment in _split_special(text, special_re):
+    segments = _split_special(text, special_re)
+    if progress:
+        from tqdm import tqdm
+
+        segments = tqdm(segments, desc="Pretokenizing", unit="segment")
+
+    for segment in segments:
         if special_set and segment in special_set:
             word_freq[(segment.encode("utf-8"),)] += 1
             continue
@@ -68,7 +75,11 @@ def train_bpe(
             pair_counts[pair] = pair_counts.get(pair, 0) + freq
             pair_to_words[pair].add(idx)
 
-    for _ in range(num_merges):
+    merge_range = range(num_merges)
+    if progress:
+        merge_range = tqdm(merge_range, desc="Merging", unit="merge")
+
+    for _ in merge_range:
         if not pair_counts:
             break
 

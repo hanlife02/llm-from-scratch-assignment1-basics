@@ -23,6 +23,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out-dir", default="artifacts/bpe")
     parser.add_argument("--name", default=None)
     parser.add_argument("--profile-out", default=None)
+    parser.add_argument("--progress", action="store_true")
     return parser.parse_args()
 
 
@@ -39,7 +40,9 @@ def main() -> None:
     profile_path = Path(args.profile_out) if args.profile_out else out_dir / f"{name}_profile.out"
 
     profiler = cProfile.Profile()
-    vocab, merges = profiler.runcall(train_bpe, str(input_path), vocab_size, special_tokens)
+    vocab, merges = profiler.runcall(
+        train_bpe, str(input_path), vocab_size, special_tokens, progress=args.progress
+    )
     profiler.dump_stats(str(profile_path))
 
     vocab_path = out_dir / f"{name}_vocab.json"
