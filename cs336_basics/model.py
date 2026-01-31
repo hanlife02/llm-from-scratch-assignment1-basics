@@ -142,6 +142,8 @@ def multihead_self_attention(
     o_proj_weight: Tensor,
     in_features: Tensor,
 ) -> Tensor:
+    seq_len = in_features.shape[-2]
+    mask = _causal_mask(seq_len, device=in_features.device)
     return _multihead_attention(
         d_model,
         num_heads,
@@ -151,6 +153,7 @@ def multihead_self_attention(
         o_proj_weight,
         in_features,
         use_rope=False,
+        mask=mask,
     )
 
 
@@ -166,6 +169,8 @@ def multihead_self_attention_with_rope(
     in_features: Tensor,
     token_positions: Tensor | None = None,
 ) -> Tensor:
+    seq_len = in_features.shape[-2]
+    mask = _causal_mask(seq_len, device=in_features.device)
     return _multihead_attention(
         d_model,
         num_heads,
@@ -178,6 +183,7 @@ def multihead_self_attention_with_rope(
         max_seq_len=max_seq_len,
         theta=theta,
         token_positions=token_positions,
+        mask=mask,
     )
 
 
