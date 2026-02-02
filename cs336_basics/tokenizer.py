@@ -14,12 +14,23 @@ class BPETokenizer:
         merges: list[tuple[bytes, bytes]],
         special_tokens: list[str] | None = None,
     ):
-        self.vocab = vocab
-        self.id_to_token = vocab
-        self.token_to_id = {v: k for k, v in vocab.items()}
+        self.vocab = dict(vocab)
         self.bpe_ranks = {pair: i for i, pair in enumerate(merges)}
         self.special_tokens = special_tokens or []
         self._bpe_cache: dict[bytes, list[bytes]] = {}
+
+        if self.special_tokens:
+            existing = set(self.vocab.values())
+            next_id = max(self.vocab.keys(), default=-1) + 1
+            for token in self.special_tokens:
+                token_bytes = token.encode("utf-8")
+                if token_bytes not in existing:
+                    self.vocab[next_id] = token_bytes
+                    existing.add(token_bytes)
+                    next_id += 1
+
+        self.id_to_token = self.vocab
+        self.token_to_id = {v: k for k, v in self.vocab.items()}
 
         if self.special_tokens:
             specials_sorted = sorted(self.special_tokens, key=len, reverse=True)
@@ -36,6 +47,50 @@ class BPETokenizer:
                     self._special_prefixes.add(prefix)
                     if len(prefix) > self._special_prefix_max_len:
                         self._special_prefix_max_len = len(prefix)
+
+    @classmethod
+    def from_files(
+        cls,
+        vocab_filepath: str,
+        merges_filepath: str,
+        special_tokens: list[str] | None = None,
+    ) -> "BPETokenizer":
+        import json
+        from pathlib import Path
+
+        vocab_path = Path(vocab_filepath)
+        merges_path = Path(merges_filepath)
+
+        with vocab_path.open("r", encoding="utf-8") as f:
+            vocab_data = json.load(f)
+
+        if isinstance(vocab_data, list):
+            vocab = {i: token.encode("latin-1") for i, token in enumerate(vocab_data)}
+        elif isinstance(vocab_data, dict):
+            if all(isinstance(k, str) for k in vocab_data.keys()):
+                vocab = {int(v): k.encode("latin-1") for k, v in vocab_data.items()}
+            else:
+                vocab = {int(k): v.encode("latin-1") for k, v in vocab_data.items()}
+        else:
+            raise ValueError("Unsupported vocab format")
+
+        if merges_path.suffix == ".json":
+            with merges_path.open("r", encoding="utf-8") as f:
+                merges_data = json.load(f)
+            merges = [(a.encode("latin-1"), b.encode("latin-1")) for a, b in merges_data]
+        else:
+            merges = []
+            with merges_path.open("r", encoding="utf-8") as f:
+                for line in f:
+                    cleaned = line.rstrip()
+                    if not cleaned:
+                        continue
+                    parts = cleaned.split(" ")
+                    if len(parts) != 2:
+                        continue
+                    merges.append((parts[0].encode("latin-1"), parts[1].encode("latin-1")))
+
+        return cls(vocab, merges, special_tokens)
 
     def _split_special(self, text: str) -> list[str]:
         if not self._special_re:

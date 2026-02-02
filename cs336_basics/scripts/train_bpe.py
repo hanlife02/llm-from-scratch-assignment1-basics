@@ -25,6 +25,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out-dir", default="artifacts/bpe")
     parser.add_argument("--name", default=None)
     parser.add_argument("--no-progress", action="store_true")
+    parser.add_argument("--force-progress", action="store_true")
     parser.add_argument("--stats-out", default=None)
     return parser.parse_args()
 
@@ -37,7 +38,13 @@ def main() -> None:
     special_tokens = list(args.special_token) if args.special_token else ["<|endoftext|>"]
 
     start_time = time.perf_counter()
-    vocab, merges = train_bpe(str(input_path), vocab_size, special_tokens, progress=not args.no_progress)
+    vocab, merges = train_bpe(
+        str(input_path),
+        vocab_size,
+        special_tokens,
+        progress=not args.no_progress,
+        force_progress=args.force_progress,
+    )
     elapsed_seconds = time.perf_counter() - start_time
     max_rss_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
 

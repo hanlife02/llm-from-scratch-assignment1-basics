@@ -29,6 +29,7 @@ def train_bpe(
     vocab_size: int,
     special_tokens: list[str] | None = None,
     progress: bool = False,
+    force_progress: bool = False,
 ) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
     """
     Train a byte-level BPE tokenizer.
@@ -49,7 +50,7 @@ def train_bpe(
     if progress:
         from tqdm import tqdm
 
-        segments = tqdm(segments, desc="Pretokenizing", unit="segment")
+        segments = tqdm(segments, desc="Pretokenizing", unit="segment", disable=False if force_progress else None)
 
     for segment in segments:
         if special_set and segment in special_set:
@@ -77,7 +78,7 @@ def train_bpe(
 
     merge_range = range(num_merges)
     if progress:
-        merge_range = tqdm(merge_range, desc="Merging", unit="merge")
+        merge_range = tqdm(merge_range, desc="Merging", unit="merge", disable=False if force_progress else None)
 
     for _ in merge_range:
         if not pair_counts:

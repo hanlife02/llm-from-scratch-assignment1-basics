@@ -25,6 +25,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--name", default=None)
     parser.add_argument("--profile-out", default=None)
     parser.add_argument("--progress", action="store_true")
+    parser.add_argument("--force-progress", action="store_true")
     return parser.parse_args()
 
 
@@ -42,7 +43,12 @@ def main() -> None:
 
     profiler = cProfile.Profile()
     vocab, merges = profiler.runcall(
-        train_bpe, str(input_path), vocab_size, special_tokens, progress=args.progress
+        train_bpe,
+        str(input_path),
+        vocab_size,
+        special_tokens,
+        progress=args.progress,
+        force_progress=args.force_progress,
     )
     profiler.dump_stats(str(profile_path))
 
