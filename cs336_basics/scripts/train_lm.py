@@ -62,6 +62,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cosine-iters", type=int, default=20000)
     parser.add_argument("--weight-decay", type=float, default=0.1)
     parser.add_argument("--grad-clip", type=float, default=1.0)
+    parser.add_argument("--precision", choices=["fp32", "fp16", "bf16"], default="fp32")
+    parser.add_argument("--tf32", action="store_true")
 
     parser.add_argument("--log-interval", type=int, default=50)
     parser.add_argument("--eval-interval", type=int, default=500)
@@ -126,13 +128,16 @@ def estimate_loss(
     eval_iters: int,
     vocab_size: int,
     device: str,
+    use_amp: bool,
+    amp_dtype: torch.dtype | None,
 ) -> float:
     model.eval()
     losses = []
     for _ in range(eval_iters):
         x, y = get_batch(data, batch_size, context_length, device)
-        logits = model(x)
-        loss = F.cross_entropy(logits.view(-1, vocab_size), y.view(-1))
+        with torch.cuda.amp.autocast(enabled=use_amp, dtype=amp_dtype):
+            logits = model(x)
+            loss = F.cross_entropy(logits.view(-1, vocab_size), y.view(-1))
         losses.append(float(loss.item()))
     model.train()
     return float(sum(losses) / len(losses))
@@ -218,6 +223,8 @@ def autotune_batch_size(
     vocab_size: int,
     device: str,
     max_batch_size: int,
+    use_amp: bool,
+    amp_dtype: torch.dtype | None,
 ) -> int:
     if not device.startswith("cuda"):
         return 1
@@ -226,8 +233,9 @@ def autotune_batch_size(
         try:
             model.zero_grad(set_to_none=True)
             x, y = get_batch(data, batch_size, context_length, device)
-            logits = model(x)
-            loss = F.cross_entropy(logits.view(-1, vocab_size), y.view(-1))
+            with torch.cuda.amp.autocast(enabled=use_amp, dtype=amp_dtype):
+                logits = model(x)
+                loss = F.cross_entropy(logits.view(-1, vocab_size), y.view(-1))
             loss.backward()
             del x, y, logits, loss
             torch.cuda.synchronize()
@@ -281,6 +289,15 @@ def run_training(args: argparse.Namespace) -> None:
     train_data = load_dataset(train_path)
     valid_data = load_dataset(valid_path)
     vocab_size = vocab_size_from_file(vocab_path)
+    use_amp = args.precision in {"fp16", "bf16"}
+    amp_dtype = torch.float16 if args.precision == "fp16" else torch.bfloat16 if args.precision == "bf16" else None
+    scaler = torch.cuda.amp.GradScaler(enabled=args.precision == "fp16")
+
+    if device.startswith("cuda"):
+        torch.backends.cuda.matmul.allow_tf32 = bool(args.tf32)
+        torch.backends.cudnn.allow_tf32 = bool(args.tf32)
+        if args.tf32:
+            torch.set_float32_matmul_precision("high")
 
     config = TransformerConfig(
         vocab_size=vocab_size,
@@ -319,6 +336,8 @@ def run_training(args: argparse.Namespace) -> None:
                 vocab_size=vocab_size,
                 device=device,
                 max_batch_size=args.max_batch_size,
+                use_amp=use_amp,
+                amp_dtype=amp_dtype,
             )
         if distributed and world_size > 1:
             batch_tensor = torch.tensor([tuned_batch_size], device=device)
@@ -398,13 +417,21 @@ def run_training(args: argparse.Namespace) -> None:
             param_group["lr"] = lr
 
         x, y = get_batch(train_data, args.batch_size, args.context_length, device)
-        logits = model(x)
-        loss = F.cross_entropy(logits.view(-1, vocab_size), y.view(-1))
+        with torch.cuda.amp.autocast(enabled=use_amp, dtype=amp_dtype):
+            logits = model(x)
+            loss = F.cross_entropy(logits.view(-1, vocab_size), y.view(-1))
 
         optimizer.zero_grad(set_to_none=True)
-        loss.backward()
-        gradient_clipping(model.parameters(), args.grad_clip)
-        optimizer.step()
+        if scaler.is_enabled():
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
+            gradient_clipping(model.parameters(), args.grad_clip)
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss.backward()
+            gradient_clipping(model.parameters(), args.grad_clip)
+            optimizer.step()
 
         step_time = time.perf_counter() - t0
 
@@ -435,6 +462,8 @@ def run_training(args: argparse.Namespace) -> None:
                     eval_iters=args.eval_iters,
                     vocab_size=vocab_size,
                     device=device,
+                    use_amp=use_amp,
+                    amp_dtype=amp_dtype,
                 )
             if distributed and world_size > 1:
                 dist.barrier()
