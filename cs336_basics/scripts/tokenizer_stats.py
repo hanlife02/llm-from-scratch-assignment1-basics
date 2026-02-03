@@ -15,6 +15,41 @@ from cs336_basics.scripts.bpe_utils import DATASET_DEFAULTS, resolve_input_path
 from cs336_basics.tokenizer import BPETokenizer
 
 
+def load_tokenizer(vocab_path: Path, merges_path: Path, special_tokens: list[str]) -> BPETokenizer:
+    if hasattr(BPETokenizer, "from_files"):
+        return BPETokenizer.from_files(str(vocab_path), str(merges_path), special_tokens)
+
+    with vocab_path.open("r", encoding="utf-8") as f:
+        vocab_data = json.load(f)
+    if isinstance(vocab_data, list):
+        vocab = {i: token.encode("latin-1") for i, token in enumerate(vocab_data)}
+    elif isinstance(vocab_data, dict):
+        if all(isinstance(k, str) for k in vocab_data.keys()):
+            vocab = {int(v): k.encode("latin-1") for k, v in vocab_data.items()}
+        else:
+            vocab = {int(k): v.encode("latin-1") for k, v in vocab_data.items()}
+    else:
+        raise ValueError("Unsupported vocab format")
+
+    if merges_path.suffix == ".json":
+        with merges_path.open("r", encoding="utf-8") as f:
+            merges_data = json.load(f)
+        merges = [(a.encode("latin-1"), b.encode("latin-1")) for a, b in merges_data]
+    else:
+        merges = []
+        with merges_path.open("r", encoding="utf-8") as f:
+            for line in f:
+                cleaned = line.rstrip()
+                if not cleaned:
+                    continue
+                parts = cleaned.split(" ")
+                if len(parts) != 2:
+                    continue
+                merges.append((parts[0].encode("latin-1"), parts[1].encode("latin-1")))
+
+    return BPETokenizer(vocab, merges, special_tokens)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Compute tokenizer compression ratios and throughput.")
     parser.add_argument("--samples", type=int, default=10)
@@ -23,6 +58,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--throughput-bytes", type=int, default=10_000_000)
     parser.add_argument("--out-dir", default="artifacts/bpe")
     parser.add_argument("--stats-out", default=None)
+    parser.add_argument("--no-progress", action="store_true")
+    parser.add_argument("--force-progress", action="store_true")
     parser.add_argument("--tinystories-vocab", default=None)
     parser.add_argument("--tinystories-merges", default=None)
     parser.add_argument("--owt-vocab", default=None)
@@ -30,10 +67,12 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def iter_documents(path: Path, special_token: str):
+def iter_documents(path: Path, special_token: str, progress_bar=None):
     buffer = ""
     with path.open("r", encoding="utf-8") as f:
         for line in f:
+            if progress_bar is not None:
+                progress_bar.update(len(line.encode("utf-8")))
             buffer += line
             while True:
                 idx = buffer.find(special_token)
@@ -101,6 +140,7 @@ def default_tokenizer_paths(out_dir: Path, dataset: str) -> tuple[Path, Path]:
 def main() -> None:
     args = parse_args()
     out_dir = Path(args.out_dir)
+    progress = not args.no_progress
 
     tinystories_vocab = (
         Path(args.tinystories_vocab)
@@ -116,14 +156,45 @@ def main() -> None:
     owt_merges = Path(args.owt_merges) if args.owt_merges else default_tokenizer_paths(out_dir, "owt")[1]
 
     special_tokens = [args.special_token]
-    tiny_tokenizer = BPETokenizer.from_files(str(tinystories_vocab), str(tinystories_merges), special_tokens)
-    owt_tokenizer = BPETokenizer.from_files(str(owt_vocab), str(owt_merges), special_tokens)
+    tiny_tokenizer = load_tokenizer(tinystories_vocab, tinystories_merges, special_tokens)
+    owt_tokenizer = load_tokenizer(owt_vocab, owt_merges, special_tokens)
 
     tinystories_path = resolve_input_path(None, "tinystories", "train")
     owt_path = resolve_input_path(None, "owt", "train")
 
-    tiny_docs = reservoir_sample(iter_documents(tinystories_path, args.special_token), args.samples, args.seed)
-    owt_docs = reservoir_sample(iter_documents(owt_path, args.special_token), args.samples, args.seed)
+    if progress:
+        from tqdm import tqdm
+
+        tiny_pbar = tqdm(
+            total=tinystories_path.stat().st_size,
+            unit="B",
+            unit_scale=True,
+            desc="Sampling TinyStories",
+            disable=False if args.force_progress else None,
+        )
+        tiny_docs = reservoir_sample(
+            iter_documents(tinystories_path, args.special_token, tiny_pbar),
+            args.samples,
+            args.seed,
+        )
+        tiny_pbar.close()
+
+        owt_pbar = tqdm(
+            total=owt_path.stat().st_size,
+            unit="B",
+            unit_scale=True,
+            desc="Sampling OWT",
+            disable=False if args.force_progress else None,
+        )
+        owt_docs = reservoir_sample(
+            iter_documents(owt_path, args.special_token, owt_pbar),
+            args.samples,
+            args.seed,
+        )
+        owt_pbar.close()
+    else:
+        tiny_docs = reservoir_sample(iter_documents(tinystories_path, args.special_token), args.samples, args.seed)
+        owt_docs = reservoir_sample(iter_documents(owt_path, args.special_token), args.samples, args.seed)
 
     tiny_ratio, tiny_bytes, tiny_tokens = compression_ratio(tiny_tokenizer, tiny_docs)
     owt_ratio, owt_bytes, owt_tokens = compression_ratio(owt_tokenizer, owt_docs)
