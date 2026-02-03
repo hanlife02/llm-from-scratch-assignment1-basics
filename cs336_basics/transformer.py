@@ -12,10 +12,10 @@ from torch.nn import functional as F
 class TransformerConfig:
     vocab_size: int
     context_length: int
-    d_model: int = 512
-    num_layers: int = 8
-    num_heads: int = 8
-    d_ff: int = 2048
+    d_model: int = 768
+    num_layers: int = 12
+    num_heads: int = 12
+    d_ff: int = 3072
     rope_theta: float = 10000.0
     use_rmsnorm: bool = True
     pre_norm: bool = True
