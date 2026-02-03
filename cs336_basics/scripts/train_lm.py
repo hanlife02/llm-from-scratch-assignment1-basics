@@ -132,10 +132,11 @@ def estimate_loss(
     amp_dtype: torch.dtype | None,
 ) -> float:
     model.eval()
+    amp_device_type = "cuda" if device.startswith("cuda") else "cpu"
     losses = []
     for _ in range(eval_iters):
         x, y = get_batch(data, batch_size, context_length, device)
-        with torch.cuda.amp.autocast(enabled=use_amp, dtype=amp_dtype):
+        with torch.amp.autocast(device_type=amp_device_type, enabled=use_amp, dtype=amp_dtype):
             logits = model(x)
             loss = F.cross_entropy(logits.view(-1, vocab_size), y.view(-1))
         losses.append(float(loss.item()))
@@ -230,10 +231,11 @@ def autotune_batch_size(
         return 1
 
     def try_batch_size(batch_size: int) -> bool:
+        amp_device_type = "cuda" if device.startswith("cuda") else "cpu"
         try:
             model.zero_grad(set_to_none=True)
             x, y = get_batch(data, batch_size, context_length, device)
-            with torch.cuda.amp.autocast(enabled=use_amp, dtype=amp_dtype):
+            with torch.amp.autocast(device_type=amp_device_type, enabled=use_amp, dtype=amp_dtype):
                 logits = model(x)
                 loss = F.cross_entropy(logits.view(-1, vocab_size), y.view(-1))
             loss.backward()
@@ -291,7 +293,11 @@ def run_training(args: argparse.Namespace) -> None:
     vocab_size = vocab_size_from_file(vocab_path)
     use_amp = args.precision in {"fp16", "bf16"}
     amp_dtype = torch.float16 if args.precision == "fp16" else torch.bfloat16 if args.precision == "bf16" else None
-    scaler = torch.cuda.amp.GradScaler(enabled=args.precision == "fp16")
+    amp_device_type = "cuda" if device.startswith("cuda") else "cpu"
+    scaler = torch.amp.GradScaler(
+        device_type=amp_device_type,
+        enabled=args.precision == "fp16" and device.startswith("cuda"),
+    )
 
     if device.startswith("cuda"):
         torch.backends.cuda.matmul.allow_tf32 = bool(args.tf32)
@@ -417,7 +423,7 @@ def run_training(args: argparse.Namespace) -> None:
             param_group["lr"] = lr
 
         x, y = get_batch(train_data, args.batch_size, args.context_length, device)
-        with torch.cuda.amp.autocast(enabled=use_amp, dtype=amp_dtype):
+        with torch.amp.autocast(device_type=amp_device_type, enabled=use_amp, dtype=amp_dtype):
             logits = model(x)
             loss = F.cross_entropy(logits.view(-1, vocab_size), y.view(-1))
 
