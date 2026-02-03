@@ -51,8 +51,12 @@ def main() -> None:
 
     input_path = resolve_input_path(args.input_path, args.dataset, args.split)
     name = resolve_name(None, args.dataset if args.input_path is None else None, args.split, input_path)
-    vocab_path = Path(args.vocab_path) if args.vocab_path else Path("artifacts/bpe") / f"{name}_vocab.json"
-    merges_path = Path(args.merges_path) if args.merges_path else Path("artifacts/bpe") / f"{name}_merges.json"
+    if args.dataset and args.input_path is None:
+        bpe_name = f"{args.dataset}_train"
+    else:
+        bpe_name = name
+    vocab_path = Path(args.vocab_path) if args.vocab_path else Path("artifacts/bpe") / f"{bpe_name}_vocab.json"
+    merges_path = Path(args.merges_path) if args.merges_path else Path("artifacts/bpe") / f"{bpe_name}_merges.json"
     out_path = Path(args.out_path) if args.out_path else Path("data/processed") / f"{name}.npy"
 
     special_tokens = list(args.special_token) if args.special_token else ["<|endoftext|>"]
