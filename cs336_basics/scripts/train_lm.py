@@ -294,10 +294,10 @@ def run_training(args: argparse.Namespace) -> None:
     use_amp = args.precision in {"fp16", "bf16"}
     amp_dtype = torch.float16 if args.precision == "fp16" else torch.bfloat16 if args.precision == "bf16" else None
     amp_device_type = "cuda" if device.startswith("cuda") else "cpu"
-    scaler = torch.amp.GradScaler(
-        device_type=amp_device_type,
-        enabled=args.precision == "fp16" and device.startswith("cuda"),
-    )
+    try:
+        scaler = torch.amp.GradScaler(enabled=args.precision == "fp16" and device.startswith("cuda"))
+    except TypeError:
+        scaler = torch.cuda.amp.GradScaler(enabled=args.precision == "fp16" and device.startswith("cuda"))
 
     if device.startswith("cuda"):
         torch.backends.cuda.matmul.allow_tf32 = bool(args.tf32)
