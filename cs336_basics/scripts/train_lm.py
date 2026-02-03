@@ -199,7 +199,10 @@ def init_distributed(device_override: str | None) -> tuple[bool, int, int, int, 
 
         if world_size > 1:
             backend = "nccl" if torch.cuda.is_available() else "gloo"
-            dist.init_process_group(backend=backend)
+            if backend == "nccl":
+                dist.init_process_group(backend=backend, device_id=torch.device(device))
+            else:
+                dist.init_process_group(backend=backend)
             return True, rank, local_rank, world_size, device
         return False, rank, local_rank, world_size, device
 
