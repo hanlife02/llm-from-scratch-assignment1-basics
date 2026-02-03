@@ -378,6 +378,9 @@ def run_training(args: argparse.Namespace) -> None:
         disable=args.no_progress,
         desc="train",
         unit="step",
+        file=sys.stdout,
+        mininterval=1.0,
+        dynamic_ncols=False,
     )
     for step in range(start_step, args.max_steps):
         t0 = time.perf_counter()
