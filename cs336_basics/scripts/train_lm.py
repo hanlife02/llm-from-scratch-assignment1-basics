@@ -71,6 +71,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--log-dir", default="artifacts/logs")
     parser.add_argument("--save-dir", default="artifacts/checkpoints")
     parser.add_argument("--save-interval", type=int, default=1000)
+    parser.add_argument("--log-data-time", action="store_true")
     parser.add_argument("--resume", default=None)
 
     parser.add_argument("--device", default=None)
@@ -424,7 +425,9 @@ def run_training(args: argparse.Namespace) -> None:
         for param_group in optimizer.param_groups:
             param_group["lr"] = lr
 
+        data_t0 = time.perf_counter()
         x, y = get_batch(train_data, args.batch_size, args.context_length, device)
+        data_time = time.perf_counter() - data_t0
         with torch.amp.autocast(device_type=amp_device_type, enabled=use_amp, dtype=amp_dtype):
             logits = model(x)
             loss = F.cross_entropy(logits.view(-1, vocab_size), y.view(-1))
@@ -444,20 +447,25 @@ def run_training(args: argparse.Namespace) -> None:
         step_time = time.perf_counter() - t0
 
         if step % args.log_interval == 0:
+            extra_metrics = {"data_time": data_time} if args.log_data_time else {}
             logger.log(
                 step,
                 train_loss=float(loss.item()),
                 val_loss=float("nan"),
                 lr=float(lr),
                 step_time=step_time,
+                **extra_metrics,
             )
             if not args.no_progress:
-                progress.set_postfix(
+                postfix = dict(
                     loss=f"{loss.item():.4f}",
                     val_loss="-" if last_val_loss is None else f"{last_val_loss:.4f}",
                     lr=f"{lr:.2e}",
                     step_time=f"{step_time:.2f}s",
                 )
+                if args.log_data_time:
+                    postfix["data_time"] = f"{data_time:.3f}s"
+                progress.set_postfix(**postfix)
 
         if step % args.eval_interval == 0:
             val_loss = float("nan")
@@ -476,21 +484,26 @@ def run_training(args: argparse.Namespace) -> None:
             if distributed and world_size > 1:
                 dist.barrier()
             if is_rank0:
+                extra_metrics = {"data_time": data_time} if args.log_data_time else {}
                 logger.log(
                     step,
                     train_loss=float(loss.item()),
                     val_loss=val_loss,
                     lr=float(lr),
                     step_time=step_time,
+                    **extra_metrics,
                 )
                 last_val_loss = val_loss
                 if not args.no_progress:
-                    progress.set_postfix(
+                    postfix = dict(
                         loss=f"{loss.item():.4f}",
                         val_loss=f"{val_loss:.4f}",
                         lr=f"{lr:.2e}",
                         step_time=f"{step_time:.2f}s",
                     )
+                    if args.log_data_time:
+                        postfix["data_time"] = f"{data_time:.3f}s"
+                    progress.set_postfix(**postfix)
 
         if step != 0 and step % args.save_interval == 0:
             if is_rank0:
