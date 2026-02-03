@@ -326,6 +326,8 @@ def run_training(args: argparse.Namespace) -> None:
         else:
             model = DDP(model)
 
+    eval_model = model.module if isinstance(model, DDP) else model
+
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     start_step = 0
     if args.resume:
@@ -336,7 +338,7 @@ def run_training(args: argparse.Namespace) -> None:
             tuned_batch_size = 1
         else:
             tuned_batch_size = autotune_batch_size(
-                model,
+                eval_model,
                 train_data,
                 context_length=args.context_length,
                 vocab_size=vocab_size,
@@ -368,7 +370,7 @@ def run_training(args: argparse.Namespace) -> None:
             prompt_ids = [tokenizer.token_to_id[special_tokens[0].encode("utf-8")]]
         prompt = torch.tensor([prompt_ids], dtype=torch.long, device=device)
         tokens = generate(
-            model,
+            eval_model,
             prompt,
             max_new_tokens=args.max_new_tokens,
             context_length=args.context_length,
@@ -461,7 +463,7 @@ def run_training(args: argparse.Namespace) -> None:
             val_loss = float("nan")
             if not distributed or is_rank0:
                 val_loss = estimate_loss(
-                    model,
+                    eval_model,
                     valid_data,
                     batch_size=args.batch_size,
                     context_length=args.context_length,
