@@ -20,7 +20,9 @@ if __package__ is None or __package__ == "":
     repo_root = Path(__file__).resolve().parents[2]
     sys.path.insert(0, str(repo_root))
 
-from cs336_basics.data import get_batch
+from torch.utils.data import DataLoader
+
+from cs336_basics.data import RandomBatchDataset, get_batch
 from cs336_basics.decoding import generate
 from cs336_basics.experiment_log import ExperimentLogger
 from cs336_basics.optim import get_lr_cosine_schedule
@@ -72,6 +74,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--save-dir", default="artifacts/checkpoints")
     parser.add_argument("--save-interval", type=int, default=1000)
     parser.add_argument("--log-data-time", action="store_true")
+    parser.add_argument("--use-dataloader", action="store_true")
+    parser.add_argument("--num-workers", type=int, default=0)
+    parser.add_argument("--pin-memory", action="store_true")
     parser.add_argument("--resume", default=None)
 
     parser.add_argument("--device", default=None)
@@ -385,6 +390,27 @@ def run_training(args: argparse.Namespace) -> None:
             dist.destroy_process_group()
         return
 
+    train_loader: DataLoader | None = None
+    train_iter = None
+    if args.use_dataloader:
+        loader_kwargs: dict[str, object] = {}
+        if args.num_workers > 0:
+            loader_kwargs["prefetch_factor"] = 2
+            loader_kwargs["persistent_workers"] = True
+        train_loader = DataLoader(
+            RandomBatchDataset(
+                train_path,
+                batch_size=args.batch_size,
+                context_length=args.context_length,
+                length=args.max_steps,
+            ),
+            batch_size=None,
+            num_workers=args.num_workers,
+            pin_memory=args.pin_memory,
+            **loader_kwargs,
+        )
+        train_iter = iter(train_loader)
+
     if is_rank0:
         log_dir = Path(args.log_dir)
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -426,7 +452,18 @@ def run_training(args: argparse.Namespace) -> None:
             param_group["lr"] = lr
 
         data_t0 = time.perf_counter()
-        x, y = get_batch(train_data, args.batch_size, args.context_length, device)
+        if args.use_dataloader:
+            if train_iter is None:
+                train_iter = iter(train_loader)
+            try:
+                x, y = next(train_iter)
+            except StopIteration:
+                train_iter = iter(train_loader)
+                x, y = next(train_iter)
+            x = x.to(device=device, non_blocking=args.pin_memory)
+            y = y.to(device=device, non_blocking=args.pin_memory)
+        else:
+            x, y = get_batch(train_data, args.batch_size, args.context_length, device)
         data_time = time.perf_counter() - data_t0
         with torch.amp.autocast(device_type=amp_device_type, enabled=use_amp, dtype=amp_dtype):
             logits = model(x)
